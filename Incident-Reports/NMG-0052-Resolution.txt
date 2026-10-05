@@ -1,0 +1,49 @@
+Ticket number: NMG-0052
+Reported by: Michelle Grant (mgrant), Benefits Coordinator, HR
+Priority: High (HR cannot reach benefits files)
+
+Issue reported:
+"My S: drive is gone and my desktop went back to the default Windows background. A coworker said IT was tightening up HR security yesterday."
+
+Scope:
+- mgrant: no S: drive and default wallpaper. She could still open \\NMG-DC1\HR by typing the path, which ruled out group access. The problem was Group Policy not applying.
+- storres (HR Manager): same symptoms, so this was wider than one user.
+- dchen (Finance): policies applied normally, so Group Policy itself was working. The issue was limited to HR.
+
+Investigation:
+- gpresult as storres: in OU=HR and a member of HR-Users, but no GPOs applied. NMG-HR-User-Policy did not show up as applied or filtered out. It was invisible.
+- gpresult as mgrant: CN=Michelle Grant,CN=Users,DC=NMG,DC=com. She was in the default Users container, not the HR OU. Still a member of HR-Users.
+- Group Policy Results wizard on NMG-DC1 first failed with "The RPC server is unavailable." WS01's firewall was blocking remote management. Enabled the Windows Management Instrumentation (WMI) and Remote Event Log Management firewall rule groups on WS01 with netsh. The wizard then showed the same result as gpresult: computer GPOs applied, no HR GPO applied or denied.
+- NMG-HR-User-Policy Delegation tab: only HR-Users, Domain Admins, Enterprise Admins, ENTERPRISE DOMAIN CONTROLLERS, and SYSTEM. No Authenticated Users or Domain Computers.
+
+Root cause:
+Two problems.
+1. The "security tightening" change removed Authenticated Users from the HR GPO's security filtering and added HR-Users. Windows downloads user GPOs using the computer's account (MS16-072), and WS01 was not in any group that could read the GPO. WS01 never downloaded it, so no HR user received it.
+2. mgrant's account was in the default Users container. GPOs cannot be linked to that container, so even with the GPO fixed she would not get HR policy.
+
+Fix applied:
+- Added Authenticated Users to NMG-HR-User-Policy with Read only (Apply Group Policy left unchecked). Security filtering stays on HR-Users, so computers can read the GPO but only HR-Users get it applied.
+- Moved mgrant from the Users container to the HR OU.
+
+Verification:
+- storres: HR wallpaper and S: drive back after gpupdate /force and sign out/in.
+- mgrant: in the HR OU, HR wallpaper and S: drive after gpupdate /force and sign out/in.
+- Delegation tab shows Authenticated Users: Read and HR-Users: Read (from Security Filtering), which is Read + Apply.
+
+Recommendations:
+- The outage came from an untested GPO change made directly in production. GPO changes should go through change management: submitted as a change request, tested on a test OU with a test account first, backed up with Backup-GPO for quick rollback, approved, and announced to the help desk before going live. That way the help desk knows what changed and does not have to troubleshoot from scratch.
+- When filtering a GPO to one group, always leave Authenticated Users or Domain Computers with Read.
+- Review the Users and Computers containers regularly for accounts that never got placed in an OU.
+- Open the WMI firewall rules on all workstations through a GPO so remote troubleshooting works without touching each PC.
+
+GPO troubleshooting checklist used:
+1. Is the GPO linked to the right OU?
+2. Is the user or computer actually in that OU? (gpresult DN line, which caught mgrant)
+3. Does security filtering include them?
+4. Can the computer read the GPO? (Delegation tab, which caught the HR GPO)
+5. Is a WMI filter blocking it, or is the GPO disabled?
+
+Supporting files: storres.html, mgrant.html (gpresult /h), storres_on_NMG-WS01_GPMC.htm (Group Policy Results wizard)
+
+Date resolved: October 5, 2026
+Resolved by: Jeremy (IT)
